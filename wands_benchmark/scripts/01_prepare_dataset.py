@@ -10,9 +10,16 @@ import json
 import random
 import pandas as pd
 import numpy as np
+import re
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Union, Any
+from collections import Counter
+import wordsegment
+import spacy
 from utils import setup_logging, create_directory
+
+wordsegment.load()
+nlp = spacy.load('en_core_web_sm')
 
 logger = setup_logging(__name__)
 
@@ -42,6 +49,10 @@ CORE_SUPERKEYS_ORDERED = [
     "ProductType", "Color", "Material", "Style", "DSWoodTone", "Finish", "Upholstery",
     "Pattern", "Shape", "OverallHeight", "OverallWidth", "OverallDepth", "WeightCapacity"
 ]
+
+NUMERIC_PLACEHOLDER = "[NUM]"
+KEY_SIMILARITY_THRESHOLD = 0.85  # Threshold for semantic similarity
+MIN_KEY_FREQUENCY = 5  # Minimum frequency for key selection
 
 PRICE_CEILING = {
     'Furniture / Living Room Furniture': 500.0,
@@ -116,6 +127,59 @@ def clean_text(text: str) -> str:
     cleaned = text.lower().strip()
     return cleaned
 
+def segment_key(key: str) -> str:
+    """
+    Segment concatenated words in key using wordsegment.
+
+    Args:
+        key: Key to segment
+
+    Returns:
+        Segmented key
+    """
+    if " " in key:
+        return key
+
+    segments = wordsegment.segment(key)
+    return "_".join(segments)
+
+def is_numeric_value(value: str) -> bool:
+    """
+    Check if a value is numeric.
+
+    Args:
+        value: Value to check
+
+    Returns:
+        True if value is numeric, False otherwise
+    """
+    if re.match(r'^\d+(\.\d+)?(\s*[a-zA-Z]+)?$', value):
+        return True
+
+    if re.match(r'^\d+(\.\d+)?\s+', value):
+        return True
+
+    return False
+
+def calculate_key_similarity(key1: str, key2: str) -> float:
+    """
+    Calculate semantic similarity between two keys using spaCy.
+
+    Args:
+        key1: First key
+        key2: Second key
+
+    Returns:
+        Similarity score between 0 and 1
+    """
+    key1 = key1.replace('_', ' ')
+    key2 = key2.replace('_', ' ')
+
+    doc1 = nlp(key1)
+    doc2 = nlp(key2)
+
+    return doc1.similarity(doc2)
+
 def parse_product_features(features_str: str) -> Dict[str, str]:
     """
     Parse product features string into a dictionary.
@@ -136,15 +200,87 @@ def parse_product_features(features_str: str) -> Dict[str, str]:
             continue
 
         parts = feature.split(':', 1)
-        key = parts[0].strip().lower().replace(' ', '_')
+
+        raw_key = parts[0].strip().lower().replace(' ', '_')
+        key = segment_key(raw_key)
+
         value = parts[1].strip() if len(parts) > 1 else ""
 
         if value.lower() in JUNK_VALUES:
             continue
 
+        if is_numeric_value(value):
+            value = NUMERIC_PLACEHOLDER
+
         features[key] = value
 
     return features
+
+def cluster_similar_keys(feature_keys: List[str]) -> Dict[str, List[str]]:
+    """
+    Cluster semantically similar keys.
+    
+    Args:
+        feature_keys: List of feature keys
+        
+    Returns:
+        Dictionary mapping representative keys to lists of similar keys
+    """
+    # Calculate key frequencies
+    key_freq = Counter(feature_keys)
+    
+    sorted_keys = sorted(key_freq.keys(), key=lambda k: key_freq[k], reverse=True)
+    
+    frequent_keys = [k for k in sorted_keys if key_freq[k] >= MIN_KEY_FREQUENCY]
+    
+    clusters = {}
+    assigned_keys = set()
+    
+    for key in frequent_keys:
+        if key in assigned_keys:
+            continue
+            
+        clusters[key] = [key]
+        assigned_keys.add(key)
+        
+        for other_key in sorted_keys:
+            if other_key in assigned_keys:
+                continue
+                
+            # Check similarity
+            similarity = calculate_key_similarity(key, other_key)
+            if similarity >= KEY_SIMILARITY_THRESHOLD:
+                clusters[key].append(other_key)
+                assigned_keys.add(other_key)
+    
+    return clusters
+
+def standardize_features(features: Dict[str, str], key_clusters: Dict[str, List[str]]) -> Dict[str, str]:
+    """
+    Standardize features using clustered keys.
+    
+    Args:
+        features: Dictionary of feature name to feature value
+        key_clusters: Dictionary mapping representative keys to lists of similar keys
+        
+    Returns:
+        Dictionary of standardized features
+    """
+    standardized = {}
+    
+    superkeys = create_superkeys(features)
+    if superkeys:
+        for superkey, value in superkeys.items():
+            standardized[superkey] = value
+    
+    for rep_key, similar_keys in key_clusters.items():
+        for key in similar_keys:
+            if key in features:
+                if rep_key not in standardized:
+                    standardized[rep_key] = features[key]
+                    break
+    
+    return standardized
 
 def create_superkeys(features: Dict[str, str]) -> Dict[str, str]:
     """
@@ -251,9 +387,24 @@ def process_dataset(input_path: str, output_path: str, sep: str = '\t') -> None:
 
     df = filter_low_quality_records(df)
 
+    # Parse product features
     df['parsed_features'] = df['clean_product_features'].apply(parse_product_features)
-
-    df['standardized_features_map'] = df['parsed_features'].apply(create_superkeys)
+    
+    all_keys = []
+    for features in df['parsed_features']:
+        all_keys.extend(features.keys())
+    
+    # Cluster similar keys
+    key_clusters = cluster_similar_keys(all_keys)
+    
+    logger.info(f"Identified {len(key_clusters)} key clusters:")
+    for rep_key, similar_keys in key_clusters.items():
+        logger.info(f"  {rep_key}: {similar_keys}")
+    
+    # Create standardized features map using clustered keys
+    df['standardized_features_map'] = df['parsed_features'].apply(
+        lambda features: standardize_features(features, key_clusters)
+    )
 
     df['processed_clean_features_str'] = df['standardized_features_map'].apply(
         lambda x: ' | '.join([f"{k}: {v}" for k, v in x.items()])

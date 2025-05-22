@@ -71,7 +71,7 @@ The retrieval module implements sparse vector search using SPLADE. Features incl
 
 ### LLM Ranking
 
-The ranking module implements pairwise ranking using GPT-4 and GPT-3.5. It includes:
+The ranking module implements pairwise ranking using GPT-4o and GPT-3.5. It includes:
 
 - Pairwise comparison of products
 - Confidence score collection
