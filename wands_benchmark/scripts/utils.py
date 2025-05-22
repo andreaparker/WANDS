@@ -94,7 +94,8 @@ def load_env_variables() -> Dict[str, str]:
     
     return {
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
-        "SPLADE_MODEL_NAME": os.getenv("SPLADE_MODEL_NAME", "naver/efficient-splade-V-large"),
+        "SPLADE_QUERY_MODEL_NAME": os.getenv("SPLADE_QUERY_MODEL_NAME", "naver/efficient-splade-V-large-query"),
+        "SPLADE_DOC_MODEL_NAME": os.getenv("SPLADE_DOC_MODEL_NAME", "naver/efficient-splade-V-large-doc"),
         "GPT4_MODEL": os.getenv("GPT4_MODEL", "gpt-4"),
         "GPT35_MODEL": os.getenv("GPT35_MODEL", "gpt-3.5-turbo"),
         "METRICS_K_VALUES": os.getenv("METRICS_K_VALUES", "3,5,10"),

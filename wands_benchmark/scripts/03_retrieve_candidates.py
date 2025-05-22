@@ -20,37 +20,67 @@ logger = setup_logging(__name__)
 class SpladeRetriever:
     """SPLADE retriever for sparse vector search."""
     
-    def __init__(self, model_name: str = "naver/efficient-splade-V-large"):
+    def __init__(self, query_model_name: str = "naver/efficient-splade-V-large-query", 
+                 doc_model_name: str = "naver/efficient-splade-V-large-doc"):
         """
-        Initialize SPLADE retriever.
+        Initialize SPLADE retriever with separate query and document models.
         
         Args:
-            model_name: Name of the SPLADE model
+            query_model_name: Name of the SPLADE query model
+            doc_model_name: Name of the SPLADE document model
         """
-        self.model_name = model_name
+        self.query_model_name = query_model_name
+        self.doc_model_name = doc_model_name
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        logger.info(f"Loading SPLADE model: {model_name}")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForMaskedLM.from_pretrained(model_name).to(self.device)
-        self.model.eval()
+        logger.info(f"Loading SPLADE query model: {query_model_name}")
+        self.query_tokenizer = AutoTokenizer.from_pretrained(query_model_name)
+        self.query_model = AutoModelForMaskedLM.from_pretrained(query_model_name).to(self.device)
+        self.query_model.eval()
+        
+        # Load document model
+        logger.info(f"Loading SPLADE document model: {doc_model_name}")
+        self.doc_tokenizer = AutoTokenizer.from_pretrained(doc_model_name)
+        self.doc_model = AutoModelForMaskedLM.from_pretrained(doc_model_name).to(self.device)
+        self.doc_model.eval()
         
         self.doc_embeddings = {}
         self.doc_ids = []
         
-    def _get_sparse_embedding(self, text: str) -> np.ndarray:
+    def _get_query_embedding(self, text: str) -> np.ndarray:
         """
-        Get sparse embedding for text.
+        Get sparse embedding for query text using the query model.
         
         Args:
-            text: Text to embed
+            text: Query text to embed
             
         Returns:
             Sparse embedding
         """
-        inputs = self.tokenizer(text, return_tensors="pt").to(self.device)
+        inputs = self.query_tokenizer(text, return_tensors="pt").to(self.device)
         with torch.no_grad():
-            outputs = self.model(**inputs)
+            outputs = self.query_model(**inputs)
+            
+        logits = outputs.logits
+        relu_log = torch.log(1 + torch.relu(logits))
+        
+        sparse_vector = torch.max(relu_log, dim=1)[0].squeeze()
+        
+        return sparse_vector.cpu().numpy()
+        
+    def _get_doc_embedding(self, text: str) -> np.ndarray:
+        """
+        Get sparse embedding for document text using the document model.
+        
+        Args:
+            text: Document text to embed
+            
+        Returns:
+            Sparse embedding
+        """
+        inputs = self.doc_tokenizer(text, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            outputs = self.doc_model(**inputs)
             
         logits = outputs.logits
         relu_log = torch.log(1 + torch.relu(logits))
@@ -79,7 +109,7 @@ class SpladeRetriever:
             if doc_id in self.doc_embeddings:
                 continue
                 
-            embedding = self._get_sparse_embedding(text)
+            embedding = self._get_doc_embedding(text)
             
             self.doc_embeddings[doc_id] = embedding
             self.doc_ids.append(doc_id)
@@ -129,7 +159,7 @@ class SpladeRetriever:
         Returns:
             List of retrieved documents with scores
         """
-        query_embedding = self._get_sparse_embedding(query)
+        query_embedding = self._get_query_embedding(query)
         
         scores = {}
         for doc_id in self.doc_ids:
@@ -171,7 +201,7 @@ def process_queries(
         
         query["stage1_candidates"] = candidates
         query["num_candidates"] = len(candidates)
-        query["stage1_retriever_model"] = retriever.model_name
+        query["stage1_retriever_model"] = f"query:{retriever.query_model_name}, doc:{retriever.doc_model_name}"
         
     return queries
 
@@ -192,7 +222,10 @@ def main():
     
     queries = load_json(query_dir / "generated_queries.json")["queries"]
     
-    retriever = SpladeRetriever(model_name=env_vars["SPLADE_MODEL_NAME"])
+    retriever = SpladeRetriever(
+        query_model_name=env_vars["SPLADE_QUERY_MODEL_NAME"],
+        doc_model_name=env_vars["SPLADE_DOC_MODEL_NAME"]
+    )
     
     embedding_file = embedding_dir / "product_embeddings.json"
     if embedding_file.exists():
