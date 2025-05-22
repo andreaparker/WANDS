@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wands_benchmark"
+version = "0.1.0"
+description = "Benchmark for evaluating search and retrieval systems using the WANDS dataset"
+readme = "README.md"
+authors = [
+    {name = "Andrea Parker", email = "parkeran@umich.edu"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "pandas>=2.0.0",
+    "numpy>=1.20.0",
+    "scikit-learn>=1.0.0",
+    "torch>=1.10.0",
+    "transformers>=4.15.0",
+    "openai>=1.0.0",
+    "faiss-cpu>=1.7.0",
+    "matplotlib>=3.4.0",
+    "plotly>=5.0.0",
+    "pytest>=6.0.0",
+    "python-dotenv>=0.19.0",
+    "tqdm>=4.60.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0.0",
+    "black>=21.5b2",
+    "isort>=5.9.1",
+    "flake8>=3.9.2",
+    "mypy>=0.812",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py39"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
